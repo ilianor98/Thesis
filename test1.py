@@ -6,17 +6,16 @@ cursor = conn.cursor()
 
 # Query distinct ministry names (excluding NULL/empty)
 cursor.execute("""
-    SELECT DISTINCT ministry
+    SELECT *
     FROM definitions
-    WHERE ministry IS NOT NULL AND TRIM(ministry) != ''
-    ORDER BY ministry ASC
+    LIMIT 10
 """)
 
 ministries = cursor.fetchall()
 
 print("Unique Ministries:\n")
-for i, (ministry,) in enumerate(ministries, 1):
-    print(f"{i}. {ministry}")
+for ministry in ministries:
+    print(f"{ministry}\n")
 
 conn.close()
  
