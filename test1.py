@@ -1,22 +1,27 @@
 import sqlite3
 
-# Connect to orismoi.db
+# Connect to the database
 conn = sqlite3.connect("orismoi.db")
 cursor = conn.cursor()
 
-# Query distinct ministry names (excluding NULL/empty)
+# Fetch 5 definitions
 cursor.execute("""
-    SELECT DISTINCT ministry
+    SELECT id, definition, source_title, year, ministry, fek_id
     FROM definitions
-    WHERE ministry IS NOT NULL AND TRIM(ministry) != ''
-    ORDER BY ministry ASC
+    LIMIT 5
 """)
+rows = cursor.fetchall()
 
-ministries = cursor.fetchall()
-
-print("Unique Ministries:\n")
-for i, (ministry,) in enumerate(ministries, 1):
-    print(f"{i}. {ministry}")
+# Print results
+print("📜 First 5 Extracted Definitions:\n")
+for row in rows:
+    id_, definition, title, year, ministry, fek_id = row
+    print(f"ID: {id_}")
+    print(f"Definition: {definition}")
+    print(f"Source Title: {title}")
+    print(f"Year: {year}")
+    print(f"Ministry: {ministry}")
+    print(f"FEK ID: {fek_id}")
+    print("-" * 40)
 
 conn.close()
- 
