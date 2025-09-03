@@ -3,7 +3,7 @@ from pathlib import Path
 
 # ───────────────────── 1. Paths
 SRC_DB = Path(r"C:/Users/Ilias/Desktop/ΣΧΟΛΗ/diplo/harvester/harvester.db")
-DST_DB = Path("orismoi.db")
+DST_DB = Path(r"C:/Users/Ilias/Desktop/ΣΧΟΛΗ/diplo/harvester/orismoi.db")
 
 src = sqlite3.connect(SRC_DB)
 dst = sqlite3.connect(DST_DB)

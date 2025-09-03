@@ -18,8 +18,8 @@ import sqlite3
 from pathlib import Path
 
 # ─────────────────────────── Settings (change defaults if needed)
-DEFAULT_ORISMOI = Path(r"C:/Users/Ilias/Desktop/sxoli/diplo/harvester/orismoi1.db")
-DEFAULT_HARVEST = Path(r"C:/Users/Ilias/Desktop/sxoli/diplo/harvester/harvester.db")
+DEFAULT_ORISMOI = Path(r"C:/Users/Ilias/Desktop/ΣΧΟΛΗ/diplo/harvester/orismoi.db")
+DEFAULT_HARVEST = Path(r"C:/Users/Ilias/Desktop/ΣΧΟΛΗ/diplo/harvester/harvester.db")
 
 st.set_page_config(page_title="Ορισμοί & Κατηγορίες", layout="wide")
 
