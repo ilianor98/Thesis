@@ -16,10 +16,11 @@ import pandas as pd
 import altair as alt
 import sqlite3
 from pathlib import Path
+from directories import *
 
 # ─────────────────────────── Settings (change defaults if needed)
-DEFAULT_ORISMOI = Path(r"C:/Users/Ilias/Desktop/ΣΧΟΛΗ/diplo/harvester/orismoi.db")
-DEFAULT_HARVEST = Path(r"C:/Users/Ilias/Desktop/ΣΧΟΛΗ/diplo/harvester/harvester.db")
+DEFAULT_ORISMOI = STRATOS_PC_ORISMOI
+DEFAULT_HARVEST = STRATOS_PC_HARVESTER
 
 st.set_page_config(page_title="Ορισμοί & Κατηγορίες", layout="wide")
 

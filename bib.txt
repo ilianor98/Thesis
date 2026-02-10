@@ -1,0 +1,26 @@
+bibliography temp
+
+Πολυνομία/κωδικοποίηση (ελληνικά, θεσμικά):
+https://www.ypes.gr/wp-content/uploads/2019/09/ethniki_stratigiki_kwdikopoiisis.pdf
+https://gslegal.gov.gr/wp-content/uploads/2022/10/%CE%A4%CE%B5%CE%BB%CE%B9%CE%BA%CF%8C-%CE%B5%CE%B3%CF%87%CE%B5%CE%B9%CF%81%CE%AF%CE%B4%CE%B9%CE%BF-%CE%BC%CE%B5%CE%B8%CE%BF%CE%B4%CE%BF%CE%BB%CE%BF%CE%B3%CE%AF%CE%B1%CF%82-%CE%BA%CF%89%CE%B4%CE%B9%CE%BA%CE%BF%CF%80%CE%BF%CE%AF%CE%B7%CF%83%CE%B7%CF%82.pdf
+
+Ελληνικά datasets/ταξινόμηση νομοθεσίας:
+https://pergamos.lib.uoa.gr/uoa/dl/object/2931361/file.pdf
+https://aclanthology.org/2021.nllp-1.6.pdf
+
+Νομικό text mining (ευρύτερα):
+https://www.icsd.aegean.gr/publication_files/602244991.pdf
+
+Εξαγωγή ορισμών (rule-based / definition extraction):
+https://aclanthology.org/W06-0203.pdf
+https://scispace.com/pdf/automatic-extraction-of-legal-concepts-and-definitions-16vglw7zyv.pdf
+https://repositorio.ulisboa.pt/bitstream/10451/10818/1/ulsd068018_td_Rosa_Gaudio.pdf
+
+arge-scale EuroVoc / transformers:
+https://arxiv.org/abs/2010.12871
+
+Πιο πρόσφατο transformer-based extraction για statutory definitions:
+https://arxiv.org/abs/2504.16353
+
+Greek maritime legal texts case study:
+https://www.image.ntua.gr/papers/1060.pdf
