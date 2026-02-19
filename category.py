@@ -6,9 +6,10 @@ category.py  (one API call per law, skip blank explanations)
 
 import sqlite3, requests, time
 from pathlib import Path
+from directories import *
 
-ORISMOI_DB   = Path(r"C:/Users/Ilias/Desktop/ΣΧΟΛΗ/diplo/harvester/orismoi.db")
-HARVESTER_DB = Path(r"C:/Users/Ilias/Desktop/ΣΧΟΛΗ/diplo/harvester/harvester.db")
+ORISMOI_DB   = SPITI_PC_ORISMOI_TEST1
+HARVESTER_DB = SPITI_PC_HARVEST
 API_URL      = "http://147.102.74.52:8080/api/predict"
 MODEL        = "el"
 DELAY_SEC    = 0.3

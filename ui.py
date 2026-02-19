@@ -19,8 +19,8 @@ from pathlib import Path
 from directories import *
 
 # ─────────────────────────── Settings (change defaults if needed)
-DEFAULT_ORISMOI = STRATOS_PC_ORISMOI
-DEFAULT_HARVEST = STRATOS_PC_HARVESTER
+DEFAULT_ORISMOI = SPITI_PC_ORISMOI_TEST1
+DEFAULT_HARVEST = SPITI_PC_HARVEST
 
 st.set_page_config(page_title="Ορισμοί & Κατηγορίες", layout="wide")
 
