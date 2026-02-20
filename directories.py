@@ -2,6 +2,7 @@ from pathlib import Path
 
 STRATOS_PC_ORISMOI = Path(r"C:/Users/User B/Desktop/ilias/thesis/vasi/orismoi.db")
 STRATOS_PC_HARVESTER = Path(r"C:/Users/User B/Desktop/ilias/thesis/vasi/harvester.db")
+STRATOS_PC_ORISMOI_1 = Path(r"C:/Users/User B/Desktop/ilias/thesis/vasi/orismoi1.db")
 
 SPITI_PC_ORISMOI = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi.db")
 SPITI_PC_HARVEST = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/harvester.db")

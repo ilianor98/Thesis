@@ -9,8 +9,8 @@ except ImportError:
     tqdm = None
 
 # ───────────────────── 1. Paths
-SRC_DB = SPITI_PC_HARVEST
-DST_DB = SPITI_PC_ORISMOI_TEST
+SRC_DB = STRATOS_PC_HARVESTER
+DST_DB = STRATOS_PC_ORISMOI_1
 
 src = sqlite3.connect(SRC_DB)
 dst = sqlite3.connect(DST_DB)

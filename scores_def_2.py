@@ -2,7 +2,7 @@
 import sqlite3, re, json
 from directories import *
 
-DB = SPITI_PC_ORISMOI_TEST1  # same DB that has definitions + score
+DB = STRATOS_PC_ORISMOI_1  # same DB that has definitions + score
 
 # ───────────────────────── Regex helpers
 GREEK_RE = re.compile(r"[Α-Ωα-ωάέήίόύώ]")
