@@ -19,9 +19,16 @@ pip-wheel-metadata/
 .DS_Store
 Thumbs.db
 
-# (Optional) local config & data
+# Local config & data
 .env
-.streamlit/
+.streamlit/secrets.toml
+settings.json
 
-# (Optional) ignore SQLite DBs (uncomment if you don't want to commit them)
-# *.db
+# SQLite databases live in the data folder (../vasi by default), never in the repo,
+# except the example results database
+*.db
+!example/*.db
+*.uploading
+pipeline_status.json
+pipeline_run.log
+*.log

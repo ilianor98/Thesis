@@ -1,14 +1,45 @@
+"""Διαδρομές του έργου.
+
+Οι βάσεις δεδομένων βρίσκονται σε έναν φάκελο δεδομένων, ο οποίος επιλέγεται με την εξής σειρά:
+  1. μεταβλητή περιβάλλοντος THESIS_DATA_DIR
+  2. ρύθμιση "data_dir" στο settings.json (τοπικό αρχείο, ορίζεται και από το UI)
+  3. ο φάκελος "vasi" δίπλα στον φάκελο του έργου (../vasi)
+"""
+import json
+import os
 from pathlib import Path
 
-STRATOS_PC_ORISMOI = Path(r"C:/Users/User B/Desktop/ilias/thesis/vasi/orismoi.db")
-STRATOS_PC_HARVESTER = Path(r"C:/Users/User B/Desktop/ilias/thesis/vasi/harvester.db")
-STRATOS_PC_ORISMOI_1 = Path(r"C:/Users/User B/Desktop/ilias/thesis/vasi/orismoi1.db")
+PROJECT_DIR = Path(__file__).resolve().parent
+SETTINGS_FILE = PROJECT_DIR / "settings.json"     # δεν ανεβαίνει στο git
+EXAMPLE_DIR = PROJECT_DIR / "example"             # βάση αποτελεσμάτων-παράδειγμα (ανεβαίνει στο git)
 
-SPITI_PC_ORISMOI = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi.db")
-SPITI_PC_HARVEST = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/harvester.db")
+HARVESTER_NAME = "harvester.db"
+RESULTS_NAME = "orismoi_final.db"
 
-SPITI_PC_ORISMOI_DEEP = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi_deep.db")
-SPITI_PC_ORISMOI_NLP = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi_nlp.db")
-SPITI_PC_ORISMOI_TEST = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi_test.db")
-SPITI_PC_ORISMOI_TEST1 = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi_test1.db")
-SPITI_PC_ORISMOI_FINAL = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi_final.db")
+
+def load_settings() -> dict:
+    try:
+        return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(**values) -> None:
+    settings = load_settings()
+    settings.update(values)
+    SETTINGS_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def data_dir() -> Path:
+    env = os.environ.get("THESIS_DATA_DIR")
+    if env:
+        return Path(env)
+    configured = load_settings().get("data_dir")
+    if configured:
+        return Path(configured)
+    return PROJECT_DIR.parent / "vasi"
+
+
+DATA_DIR = data_dir()
+DEFAULT_HARVESTER = DATA_DIR / HARVESTER_NAME
+DEFAULT_RESULTS = DATA_DIR / RESULTS_NAME

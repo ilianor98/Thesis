@@ -1,15 +1,18 @@
-import sqlite3, re
+import argparse, sqlite3, re
 from bisect import bisect_right
 from pathlib import Path
-from directories import *
+from directories import DEFAULT_HARVESTER, DEFAULT_RESULTS
 
-# ───────────────────── 1. Paths
-SRC_DB = SPITI_PC_HARVEST
-DST_DB = SPITI_PC_ORISMOI_FINAL   # νέα βάση· η orismoi_test1.db κρατά τα αποτελέσματα της προηγούμενης έκδοσης
+# ───────────────────── 1. Version
+EXTRACT_VERSION = "extract_v2"
 
 # ───────────────────── 2. Table schema (term + explanation)
 # Το πλήρες κείμενο του ΦΕΚ δεν αντιγράφεται σε κάθε γραμμή· βρίσκεται στο et.fekTEXT (fekID).
+# Νέα εξαγωγή σημαίνει νέα ID, άρα οι βαθμολογίες και οι κατηγορίες μιας παλαιότερης εκτέλεσης διαγράφονται.
 SCHEMA = """
+DROP TABLE IF EXISTS category;
+DROP TABLE IF EXISTS score_2;
+DROP TABLE IF EXISTS run_info;
 DROP TABLE IF EXISTS definitions;
 CREATE TABLE definitions (
   ID             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -301,9 +304,11 @@ def extract_defs(txt: str):
     return res
 
 # ───────────────────── 8. Scan & insert (μία φορά ανά φύλλο ΦΕΚ)
-def main():
-    src = sqlite3.connect(SRC_DB)
-    dst = sqlite3.connect(DST_DB)
+def run(src_db, dst_db, progress=None) -> dict:
+    """Εξαγωγή από το src_db (πίνακας et) στο dst_db (πίνακας definitions).
+    progress(done, total): προαιρετική συνάρτηση προόδου, καλείται ανά φύλλα ΦΕΚ."""
+    src = sqlite3.connect(f"file:{Path(src_db).as_posix()}?mode=ro", uri=True)
+    dst = sqlite3.connect(dst_db)
     s, d = src.cursor(), dst.cursor()
     d.executescript(SCHEMA)
 
@@ -335,15 +340,25 @@ def main():
                 rec["scope"], rec["in_def_article"], resolved, rec["lang"]
             ))
             inserted += 1
+        if progress and (n % 50 == 0 or n == len(issues)):
+            progress(n, len(issues))
         if n % 1000 == 0:
             print(f"  …{n}/{len(issues)} φύλλα")
 
     dst.commit()
-    by_tag = d.execute("SELECT pattern_tag, COUNT(*) FROM definitions GROUP BY 1").fetchall()
+    by_tag = dict(d.execute("SELECT pattern_tag, COUNT(*) FROM definitions GROUP BY 1").fetchall())
     src.close()
     dst.close()
-    print(f"[+] Αποθηκεύτηκαν {inserted} ορισμοί από {len(issues)} φύλλα σε '{Path(DST_DB).name}'")
-    print(f"    ανά κανόνα: {dict(by_tag)} | χωρίς βέβαιο νομοθέτημα: {unresolved}")
+    print(f"[+] Αποθηκεύτηκαν {inserted} ορισμοί από {len(issues)} φύλλα σε '{Path(dst_db).name}'")
+    print(f"    ανά κανόνα: {by_tag} | χωρίς βέβαιο νομοθέτημα: {unresolved}")
+    return {"definitions": inserted, "issues": len(issues), "by_tag": by_tag, "act_unresolved": unresolved}
+
+def main():
+    ap = argparse.ArgumentParser(description="Εξαγωγή νομικών ορισμών από βάση harvester (πίνακας et).")
+    ap.add_argument("--source", default=str(DEFAULT_HARVESTER), help="βάση harvester (προεπιλογή: %(default)s)")
+    ap.add_argument("--out", default=str(DEFAULT_RESULTS), help="βάση αποτελεσμάτων (προεπιλογή: %(default)s)")
+    args = ap.parse_args()
+    run(args.source, args.out)
 
 if __name__ == "__main__":
     main()

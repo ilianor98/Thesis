@@ -1,8 +1,6 @@
 # scores_def_2.py — βαθμός αξιοπιστίας για κάθε ορισμό του πίνακα definitions (πίνακας score_2)
-import sqlite3, re, json
-from directories import *
-
-DB = SPITI_PC_ORISMOI_FINAL  # βάση της εξαγωγής του extract_junk.py (definitions με scope / in_def_article / lang)
+import argparse, sqlite3, re, json
+from directories import DEFAULT_RESULTS
 
 RULE_VERSION = "v3_structure"
 REVIEW_THRESHOLD = 0.50      # κάτω από αυτό: needs_review = 1
@@ -137,15 +135,18 @@ def score_row(term: str, expl: str, excerpt: str, pattern_tag: str,
     return conf, needs_review, flags, len(words), L, contrib
 
 # ───────────────────────── Main
-def main():
-    con = sqlite3.connect(DB)
+def run(db, progress=None) -> dict:
+    """Βαθμολογεί όλους τους ορισμούς της βάσης db και γράφει τον πίνακα score_2.
+    progress(done, total): προαιρετική συνάρτηση προόδου."""
+    con = sqlite3.connect(db)
     con.execute("PRAGMA foreign_keys = ON;")
     cur = con.cursor()
 
     cols = {r[1] for r in cur.execute("PRAGMA table_info(definitions)")}
     missing = {"scope", "in_def_article", "lang"} - cols
     if missing:
-        raise SystemExit(f"Η βάση {DB} δεν έχει τις στήλες {sorted(missing)}· τρέξε πρώτα το extract_junk.py.")
+        con.close()
+        raise RuntimeError(f"Η βάση {db} δεν έχει τις στήλες {sorted(missing)}· τρέξε πρώτα το extract_junk.py.")
 
     cur.executescript("""
     DROP TABLE IF EXISTS score_2;
@@ -210,12 +211,20 @@ def main():
             RULE_VERSION, json.dumps(contrib, ensure_ascii=False)
         ))
         inserted += 1
+        if progress and (inserted % 500 == 0 or inserted == len(rows)):
+            progress(inserted, len(rows))
 
     con.commit()
     flagged, avg = cur.execute("SELECT SUM(needs_review), ROUND(AVG(confidence), 3) FROM score_2").fetchone()
     con.close()
-    print(f"[+] Inserted {inserted} rows into score_2 in: {DB}")
+    print(f"[+] Inserted {inserted} rows into score_2 in: {db}")
     print(f"    μέσος βαθμός {avg} | needs_review (< {REVIEW_THRESHOLD}): {flagged}")
+    return {"scored": inserted, "needs_review": flagged or 0, "mean_confidence": avg}
+
+def main():
+    ap = argparse.ArgumentParser(description="Βαθμολόγηση των ορισμών μιας βάσης αποτελεσμάτων (πίνακας score_2).")
+    ap.add_argument("--db", default=str(DEFAULT_RESULTS), help="βάση αποτελεσμάτων (προεπιλογή: %(default)s)")
+    run(ap.parse_args().db)
 
 if __name__ == "__main__":
     main()
