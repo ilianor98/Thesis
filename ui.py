@@ -1,5 +1,5 @@
 # ui.py
-# Browse orismoi + categories and a separate analytics page
+# Dashboard + browse orismoi/categories + analytics page
 # Run: streamlit run ui.py
 
 import sys, subprocess, importlib
@@ -18,11 +18,36 @@ import sqlite3
 from pathlib import Path
 from directories import *
 
+# ─────────────────────────── Chart palette (validated categorical/sequential set)
+BLUE       = "#2a78d6"   # primary series / sequential hue
+BLUE_L     = "#86b6ef"   # ordinal ramp step 250 (light)
+BLUE_M     = "#3987e5"   # ordinal ramp step 400 (mid)
+BLUE_D     = "#1c5cab"   # ordinal ramp step 550 (dark)
+GRID       = "#e1e0d9"
+AXIS       = "#c3c2b7"
+INK_2ND    = "#52514e"
+INK_MUTED  = "#898781"
+WARNING    = "#fab219"
+
+def style(chart, height=300):
+    """Apply consistent recessive-grid / muted-axis styling to an Altair chart."""
+    return (
+        chart
+        .properties(height=height)
+        .configure_view(strokeWidth=0)
+        .configure_axis(
+            gridColor=GRID, domainColor=AXIS,
+            labelColor=INK_2ND, titleColor=INK_2ND,
+            labelFontSize=11, titleFontSize=12,
+        )
+        .configure_title(color="#0b0b0b", fontSize=14)
+    )
+
 # ─────────────────────────── Settings (change defaults if needed)
 DEFAULT_ORISMOI = SPITI_PC_ORISMOI_TEST1
 DEFAULT_HARVEST = SPITI_PC_HARVEST
 
-st.set_page_config(page_title="Ορισμοί & Κατηγορίες", layout="wide")
+st.set_page_config(page_title="Ορισμοί & Κατηγορίες", layout="wide", page_icon="📚")
 
 # ─────────────────────────── Basic helpers / DB utilities
 def _conn(path: Path):
@@ -137,7 +162,7 @@ def get_title_and_text(harvester_db: Path, fek_id: int):
         row = con.execute("SELECT nomosTitle, fekTEXT FROM et WHERE ID = ?", (fek_id,)).fetchone()
     return (row[0], row[1]) if row else ("", "")
 
-# ─────────────────────────── Analytics helpers
+# ─────────────────────────── Analytics helpers (Category Overview page)
 @st.cache_data(show_spinner=False, ttl=60)
 def load_categorised(orismoi_db: Path, year_min: int, year_max: int) -> pd.DataFrame:
     """
@@ -229,9 +254,341 @@ def aggregate_categories(melt: pd.DataFrame, weight_by_score: bool, cat_filter: 
     )
     return agg, totals
 
+# ─────────────────────────── Dashboard data helpers
+@st.cache_data(show_spinner=False, ttl=60)
+def get_dashboard_stats(orismoi_db: Path, harvester_db: Path):
+    stats = {}
+
+    if harvester_db.exists():
+        with _conn(harvester_db) as con:
+            row = con.execute(
+                "SELECT COUNT(*), SUM(CASE WHEN fekTEXT IS NOT NULL AND LENGTH(fekTEXT) > 100 THEN 1 ELSE 0 END) FROM et"
+            ).fetchone()
+        stats["laws_total"] = row[0] or 0
+        stats["laws_with_text"] = row[1] or 0
+    else:
+        stats["laws_total"] = None
+        stats["laws_with_text"] = None
+
+    with _conn(orismoi_db) as con:
+        stats["defs_total"] = con.execute("SELECT COUNT(*) FROM definitions").fetchone()[0]
+        stats["laws_with_defs"] = con.execute("SELECT COUNT(DISTINCT fekID) FROM definitions").fetchone()[0]
+        stats["distinct_terms"] = con.execute(
+            "SELECT COUNT(DISTINCT LOWER(TRIM(term))) FROM definitions"
+        ).fetchone()[0]
+
+        if table_exists(orismoi_db, "category"):
+            stats["defs_categorised"] = con.execute(
+                "SELECT COUNT(DISTINCT defID) FROM category"
+            ).fetchone()[0]
+            stats["unique_categories"] = con.execute("""
+                SELECT COUNT(DISTINCT c) FROM (
+                  SELECT cat1 c FROM category WHERE cat1 IS NOT NULL AND cat1 != ''
+                  UNION SELECT cat2 FROM category WHERE cat2 IS NOT NULL AND cat2 != ''
+                  UNION SELECT cat3 FROM category WHERE cat3 IS NOT NULL AND cat3 != ''
+                )
+            """).fetchone()[0]
+        else:
+            stats["defs_categorised"] = None
+            stats["unique_categories"] = None
+
+        if table_exists(orismoi_db, "score_2"):
+            score_table = "score_2"
+        elif table_exists(orismoi_db, "score"):
+            score_table = "score"
+        else:
+            score_table = None
+        stats["score_table"] = score_table
+
+        if score_table:
+            row = con.execute(
+                f"SELECT ROUND(AVG(confidence),3), SUM(needs_review), COUNT(*) FROM {score_table}"
+            ).fetchone()
+            stats["avg_confidence"] = row[0]
+            stats["needs_review"] = row[1] or 0
+            stats["scored_total"] = row[2]
+        else:
+            stats["avg_confidence"] = None
+            stats["needs_review"] = None
+            stats["scored_total"] = None
+
+    return stats
+
+@st.cache_data(show_spinner=False, ttl=60)
+def get_pattern_tag_stats(orismoi_db: Path) -> pd.DataFrame:
+    with _conn(orismoi_db) as con:
+        rows = con.execute(
+            "SELECT pattern_tag, COUNT(*) FROM definitions GROUP BY pattern_tag ORDER BY 2 DESC"
+        ).fetchall()
+    return pd.DataFrame(rows, columns=["pattern_tag", "count"])
+
+@st.cache_data(show_spinner=False, ttl=60)
+def get_confidence_series(orismoi_db: Path, score_table: str) -> pd.DataFrame:
+    if not score_table:
+        return pd.DataFrame(columns=["confidence"])
+    with _conn(orismoi_db) as con:
+        rows = con.execute(f"SELECT confidence FROM {score_table}").fetchall()
+    return pd.DataFrame([r[0] for r in rows], columns=["confidence"])
+
+@st.cache_data(show_spinner=False, ttl=60)
+def get_review_threshold(orismoi_db: Path, score_table: str):
+    # το όριο επανελέγχου = ο μικρότερος βαθμός που ΔΕΝ σημειώθηκε για έλεγχο (ίδιο για κάθε έκδοση βαθμολόγησης)
+    with _conn(orismoi_db) as con:
+        row = con.execute(f"SELECT MIN(confidence) FROM {score_table} WHERE needs_review = 0").fetchone()
+    return row[0] if row else None
+
+@st.cache_data(show_spinner=False, ttl=60)
+def get_defs_per_year(orismoi_db: Path) -> pd.DataFrame:
+    with _conn(orismoi_db) as con:
+        rows = con.execute(
+            "SELECT fekEtos, COUNT(*) FROM definitions WHERE fekEtos IS NOT NULL GROUP BY fekEtos ORDER BY fekEtos"
+        ).fetchall()
+    return pd.DataFrame(rows, columns=["year", "count"])
+
+@st.cache_data(show_spinner=False, ttl=60)
+def get_top_terms(orismoi_db: Path, top_n: int = 15) -> pd.DataFrame:
+    with _conn(orismoi_db) as con:
+        rows = con.execute("""
+            SELECT term, COUNT(*) c FROM (
+                SELECT TRIM(term) AS term FROM definitions WHERE term IS NOT NULL AND TRIM(term) != ''
+            )
+            GROUP BY LOWER(term)
+            ORDER BY c DESC
+            LIMIT ?
+        """, (top_n,)).fetchall()
+    return pd.DataFrame(rows, columns=["term", "count"])
+
+@st.cache_data(show_spinner=False, ttl=60)
+def get_top_categories_simple(orismoi_db: Path, top_n: int = 15) -> pd.DataFrame:
+    if not table_exists(orismoi_db, "category"):
+        return pd.DataFrame(columns=["category", "count"])
+    with _conn(orismoi_db) as con:
+        rows = con.execute("""
+            SELECT cat1, COUNT(*) c FROM category
+            WHERE cat1 IS NOT NULL AND cat1 != ''
+            GROUP BY cat1 ORDER BY c DESC LIMIT ?
+        """, (top_n,)).fetchall()
+    return pd.DataFrame(rows, columns=["category", "count"])
+
+@st.cache_data(show_spinner=False, ttl=60)
+def get_highlight_examples(orismoi_db: Path, n: int = 6) -> pd.DataFrame:
+    has_cat = table_exists(orismoi_db, "category")
+    has_score = table_exists(orismoi_db, "score_2")
+    with _conn(orismoi_db) as con:
+        if has_cat and has_score:
+            rows = con.execute("""
+                SELECT d.term, d.explanation, c.cat1, s.confidence
+                FROM definitions d
+                JOIN category c ON c.defID = d.ID
+                JOIN score_2 s ON s.def_id = d.ID
+                WHERE s.confidence >= 0.6 AND LENGTH(d.explanation) BETWEEN 40 AND 400
+                ORDER BY RANDOM() LIMIT ?
+            """, (n,)).fetchall()
+            cols = ["term", "explanation", "category", "confidence"]
+        elif has_cat:
+            rows = con.execute("""
+                SELECT d.term, d.explanation, c.cat1
+                FROM definitions d JOIN category c ON c.defID = d.ID
+                WHERE LENGTH(d.explanation) BETWEEN 40 AND 400
+                ORDER BY RANDOM() LIMIT ?
+            """, (n,)).fetchall()
+            cols = ["term", "explanation", "category"]
+        else:
+            rows = con.execute("""
+                SELECT term, explanation FROM definitions
+                WHERE LENGTH(explanation) BETWEEN 40 AND 400
+                ORDER BY RANDOM() LIMIT ?
+            """, (n,)).fetchall()
+            cols = ["term", "explanation"]
+    return pd.DataFrame(rows, columns=cols)
+
+# ─────────────────────────── Dashboard page
+def render_dashboard(orismoi_db: Path, harvester_db: Path):
+    st.title("📚 Επισήμανση Νομικών Ορισμών — Επισκόπηση Έργου")
+    st.caption(
+        "Εξαγωγή ορισμών από την Ελληνική Νομοθεσία (ΦΕΚ) με κανόνες (regex) "
+        "και κατηγοριοποίηση μέσω εξωτερικού μοντέλου."
+    )
+
+    stats = get_dashboard_stats(orismoi_db, harvester_db)
+
+    # ── KPI rows
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Νόμοι στο corpus", f"{stats['laws_total']:,}" if stats["laws_total"] else "—")
+    c2.metric("Νόμοι με ≥1 ορισμό", f"{stats['laws_with_defs']:,}")
+    c3.metric("Εξαγόμενοι ορισμοί", f"{stats['defs_total']:,}")
+
+    c4, c5, c6 = st.columns(3)
+    if stats["defs_categorised"] is not None and stats["defs_total"]:
+        pct = stats["defs_categorised"] / stats["defs_total"] * 100
+        c4.metric("Κατηγοριοποιημένοι ορισμοί", f"{stats['defs_categorised']:,}", f"{pct:.0f}% του συνόλου")
+    else:
+        c4.metric("Κατηγοριοποιημένοι ορισμοί", "—")
+    c5.metric("Διακριτοί όροι", f"{stats['distinct_terms']:,}")
+    if stats["avg_confidence"] is not None:
+        c6.metric(
+            "Μέσος βαθμός εμπιστοσύνης",
+            f"{stats['avg_confidence']:.2f}",
+            f"{stats['needs_review']:,} χρειάζονται έλεγχο" if stats["needs_review"] else None,
+            delta_color="off",
+        )
+    else:
+        c6.metric("Μέσος βαθμός εμπιστοσύνης", "—")
+
+    st.divider()
+
+    # ── Pipeline funnels
+    fcol1, fcol2 = st.columns(2)
+    with fcol1:
+        st.subheader("Από το Corpus στους Νόμους με Ορισμούς")
+        if stats["laws_total"]:
+            stages = ["Σύνολο ΦΕΚ", "Με αναγνώσιμο κείμενο", "Με ≥1 ορισμό"]
+            counts = [stats["laws_total"], stats["laws_with_text"], stats["laws_with_defs"]]
+            funnel_laws = pd.DataFrame({"stage": stages, "count": counts, "order": range(len(stages))})
+            chart = alt.Chart(funnel_laws).mark_bar(cornerRadiusEnd=4).encode(
+                y=alt.Y("stage:N", sort=stages, title=None),
+                x=alt.X("count:Q", title="Πλήθος νόμων"),
+                color=alt.Color("order:O", scale=alt.Scale(domain=list(range(len(stages))), range=[BLUE_L, BLUE_M, BLUE_D]), legend=None),
+                tooltip=[alt.Tooltip("stage:N", title="Στάδιο"), alt.Tooltip("count:Q", title="Πλήθος", format=",")]
+            )
+            st.altair_chart(style(chart, height=200), use_container_width=True)
+        else:
+            st.info("Δεν βρέθηκε harvester.db για τον υπολογισμό.")
+
+    with fcol2:
+        st.subheader("Από τους Ορισμούς στην Κατηγοριοποίηση")
+        stages = ["Εξήχθησαν"]
+        counts = [stats["defs_total"]]
+        if stats["defs_categorised"] is not None:
+            stages.append("Κατηγοριοποιήθηκαν"); counts.append(stats["defs_categorised"])
+        if stats["scored_total"] is not None:
+            passed = stats["scored_total"] - (stats["needs_review"] or 0)
+            stages.append("Πέρασαν τον έλεγχο ποιότητας"); counts.append(passed)
+        funnel_defs = pd.DataFrame({"stage": stages, "count": counts, "order": range(len(stages))})
+        colors = [BLUE_L, BLUE_M, BLUE_D][:len(stages)]
+        chart = alt.Chart(funnel_defs).mark_bar(cornerRadiusEnd=4).encode(
+            y=alt.Y("stage:N", sort=stages, title=None),
+            x=alt.X("count:Q", title="Πλήθος ορισμών"),
+            color=alt.Color("order:O", scale=alt.Scale(domain=list(range(len(stages))), range=colors), legend=None),
+            tooltip=[alt.Tooltip("stage:N", title="Στάδιο"), alt.Tooltip("count:Q", title="Πλήθος", format=",")]
+        )
+        st.altair_chart(style(chart, height=200), use_container_width=True)
+
+    st.divider()
+
+    # ── Pattern tag + confidence histogram
+    pcol1, pcol2 = st.columns(2)
+    with pcol1:
+        st.subheader("Κατανομή ανά Μοτίβο Εξαγωγής")
+        tag_df = get_pattern_tag_stats(orismoi_db)
+        if not tag_df.empty:
+            chart = alt.Chart(tag_df).mark_bar(cornerRadiusEnd=4, color=BLUE).encode(
+                y=alt.Y("pattern_tag:N", sort="-x", title=None),
+                x=alt.X("count:Q", title="Πλήθος ορισμών"),
+                tooltip=[alt.Tooltip("pattern_tag:N", title="Μοτίβο"), alt.Tooltip("count:Q", title="Πλήθος", format=",")]
+            )
+            st.altair_chart(style(chart, height=200), use_container_width=True)
+        else:
+            st.info("Δεν υπάρχουν δεδομένα.")
+
+    with pcol2:
+        st.subheader("Κατανομή Βαθμού Εμπιστοσύνης")
+        conf_df = get_confidence_series(orismoi_db, stats["score_table"])
+        if not conf_df.empty:
+            threshold = get_review_threshold(orismoi_db, stats["score_table"]) or 0.5
+            hist = alt.Chart(conf_df).mark_bar(cornerRadiusTopLeft=2, cornerRadiusTopRight=2, color=BLUE).encode(
+                x=alt.X("confidence:Q", bin=alt.Bin(maxbins=20), title="Βαθμός εμπιστοσύνης"),
+                y=alt.Y("count():Q", title="Πλήθος ορισμών"),
+                tooltip=[alt.Tooltip("count():Q", title="Πλήθος")]
+            )
+            rule = alt.Chart(pd.DataFrame({"x": [threshold]})).mark_rule(
+                color=WARNING, strokeDash=[4, 3], size=2
+            ).encode(x="x:Q")
+            st.altair_chart(style(hist + rule, height=200), use_container_width=True)
+            st.caption("Η διακεκομμένη γραμμή δείχνει το όριο επανελέγχου (needs_review).")
+        else:
+            st.info("Δεν βρέθηκε πίνακας βαθμολόγησης (score / score_2) σε αυτή τη βάση.")
+
+    st.divider()
+
+    # ── Definitions per year
+    st.subheader("Ορισμοί ανά Έτος ΦΕΚ")
+    year_df = get_defs_per_year(orismoi_db)
+    if not year_df.empty:
+        chart = alt.Chart(year_df).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3, color=BLUE).encode(
+            x=alt.X("year:O", title="Έτος"),
+            y=alt.Y("count:Q", title="Πλήθος ορισμών"),
+            tooltip=[alt.Tooltip("year:O", title="Έτος"), alt.Tooltip("count:Q", title="Πλήθος", format=",")]
+        )
+        st.altair_chart(style(chart, height=260), use_container_width=True)
+    else:
+        st.info("Δεν υπάρχουν δεδομένα ετών.")
+
+    st.divider()
+
+    # ── Top categories + top terms
+    tcol1, tcol2 = st.columns(2)
+    with tcol1:
+        st.subheader("Συχνότερες Κατηγορίες")
+        cat_df = get_top_categories_simple(orismoi_db, 15)
+        if not cat_df.empty:
+            chart = alt.Chart(cat_df).mark_bar(cornerRadiusEnd=4, color=BLUE).encode(
+                y=alt.Y("category:N", sort="-x", title=None),
+                x=alt.X("count:Q", title="Πλήθος ορισμών"),
+                tooltip=[alt.Tooltip("category:N", title="Κατηγορία"), alt.Tooltip("count:Q", title="Πλήθος", format=",")]
+            )
+            st.altair_chart(style(chart, height=420), use_container_width=True)
+        else:
+            st.info("Δεν βρέθηκε πίνακας κατηγοριών σε αυτή τη βάση.")
+
+    with tcol2:
+        st.subheader("Συχνότερα (Επανα-)οριζόμενοι Όροι")
+        term_df = get_top_terms(orismoi_db, 15)
+        if not term_df.empty:
+            chart = alt.Chart(term_df).mark_bar(cornerRadiusEnd=4, color=BLUE).encode(
+                y=alt.Y("term:N", sort="-x", title=None),
+                x=alt.X("count:Q", title="Πλήθος εμφανίσεων"),
+                tooltip=[alt.Tooltip("term:N", title="Όρος"), alt.Tooltip("count:Q", title="Πλήθος", format=",")]
+            )
+            st.altair_chart(style(chart, height=420), use_container_width=True)
+        else:
+            st.info("Δεν υπάρχουν όροι.")
+
+    st.divider()
+
+    # ── Highlight examples
+    st.subheader("Ενδεικτικοί Ορισμοί")
+    examples = get_highlight_examples(orismoi_db, 6)
+    if not examples.empty:
+        cols = st.columns(3)
+        for i, row in examples.reset_index(drop=True).iterrows():
+            with cols[i % 3]:
+                with st.container(border=True):
+                    st.markdown(f"**{row['term']}**")
+                    expl = row["explanation"] or ""
+                    if len(expl) > 260:
+                        expl = expl[:260].rstrip() + "…"
+                    st.write(expl)
+                    badges = []
+                    if "category" in row and pd.notna(row.get("category")):
+                        badges.append(f":blue-background[{row['category']}]")
+                    if "confidence" in row and pd.notna(row.get("confidence")):
+                        badges.append(f":green-background[conf {row['confidence']:.2f}]")
+                    if badges:
+                        st.markdown(" ".join(badges))
+    else:
+        st.info("Δεν βρέθηκαν παραδείγματα με τα τρέχοντα κριτήρια.")
+
+    st.divider()
+    bcol1, bcol2 = st.columns(2)
+    if bcol1.button("🔎 Μετάβαση στην Περιήγηση", width='stretch'):
+        st.session_state["page"] = "browse"; st.rerun()
+    if bcol2.button("📈 Λεπτομερής Ανάλυση Κατηγοριών", width='stretch'):
+        st.session_state["page"] = "overview"; st.rerun()
+
 # ─────────────────────────── Sidebar / Routing
 if "page" not in st.session_state:
-    st.session_state["page"] = "browse"  # or 'overview'
+    st.session_state["page"] = "dashboard"
 
 st.sidebar.header("Ρυθμίσεις βάσεων")
 orismoi_path = st.sidebar.text_input("orismoi.db", value=str(DEFAULT_ORISMOI))
@@ -244,19 +601,25 @@ if not orismoi_db.exists():
     st.error(f"Δεν βρέθηκε το orismoi DB: {orismoi_db}")
     st.stop()
 
+PAGE_LABELS = ["📊 Επισκόπηση", "🔎 Περιήγηση", "📈 Επισκόπηση Κατηγοριών"]
+PAGE_KEYS = ["dashboard", "browse", "overview"]
 page_choice = st.sidebar.radio(
     "Σελίδα",
-    ["🔎 Περιήγηση", "📈 Επισκόπηση Κατηγοριών"],
-    index=0 if st.session_state["page"] == "browse" else 1
+    PAGE_LABELS,
+    index=PAGE_KEYS.index(st.session_state["page"])
 )
-st.session_state["page"] = "browse" if page_choice.startswith("🔎") else "overview"
+st.session_state["page"] = PAGE_KEYS[PAGE_LABELS.index(page_choice)]
 
 # Shared year bounds
 miny, maxy = get_year_bounds(orismoi_db)
 miny = int(miny or 1800); maxy = int(maxy or 2100)
 
+# ─────────────────────────── PAGE 0: Dashboard
+if st.session_state["page"] == "dashboard":
+    render_dashboard(orismoi_db, harvester_db)
+
 # ─────────────────────────── PAGE 1: Browse
-if st.session_state["page"] == "browse":
+elif st.session_state["page"] == "browse":
     # Filters
     st.sidebar.header("Φίλτρα")
     year_min, year_max = st.sidebar.slider("Έτος (fekEtos)", miny, maxy, value=(miny, maxy))
@@ -305,7 +668,7 @@ if st.session_state["page"] == "browse":
     if missing:
         st.warning(f"Missing columns in query result: {missing}")
 
-    st.dataframe(df[available], use_container_width=True, height=420)
+    st.dataframe(df[available], width='stretch', height=420)
 
     st.download_button("⬇️ Λήψη τρέχουσας σελίδας (CSV)",
                     data=df.to_csv(index=False).encode("utf-8"),
@@ -350,19 +713,23 @@ if st.session_state["page"] == "browse":
             })
             bar = (
                 alt.Chart(chart_df)
-                .mark_bar()
+                .mark_bar(cornerRadiusEnd=4, color=BLUE)
                 .encode(
                     x=alt.X("score:Q", title="Confidence"),
                     y=alt.Y("category:N", sort='-x', title="Κατηγορία"),
                     tooltip=["category", alt.Tooltip("score:Q", format=".3f")]
                 )
             )
-            st.altair_chart(bar, use_container_width=True)
+            st.altair_chart(style(bar, height=180), use_container_width=True)
         else:
             st.info("Δεν υπάρχουν κατηγορίες για αυτή την εγγραφή.")
 
     st.divider()
-    if st.button("📈 Μετάβαση στην Επισκόπηση Κατηγοριών"):
+    dcol1, dcol2 = st.columns(2)
+    if dcol1.button("📊 Επιστροφή στην Επισκόπηση"):
+        st.session_state["page"] = "dashboard"
+        st.rerun()
+    if dcol2.button("📈 Μετάβαση στην Επισκόπηση Κατηγοριών"):
         st.session_state["page"] = "overview"
         st.rerun()
 
@@ -412,7 +779,7 @@ else:
     # Bar chart of top categories
     chart = (
         alt.Chart(top)
-        .mark_bar()
+        .mark_bar(cornerRadiusEnd=4, color=BLUE)
         .encode(
             x=alt.X(f"{measure}:Q", title=title_measure),
             y=alt.Y("category:N", sort='-x', title="Κατηγορία"),
@@ -428,12 +795,12 @@ else:
         )
     )
     st.subheader("Top κατηγορίες")
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(style(chart, height=420), use_container_width=True)
 
     # Full table
     st.subheader("Αναλυτικός πίνακας κατηγοριών")
     show_cols = ["category", "occurrences", "weighted_count", "mean_score", "rank1", "rank2", "rank3"]
-    st.dataframe(agg.sort_values(measure, ascending=False)[show_cols], use_container_width=True, height=420)
+    st.dataframe(agg.sort_values(measure, ascending=False)[show_cols], width='stretch', height=420)
 
     # Downloads
     st.download_button("⬇️ Λήψη αναλυτικού πίνακα (CSV)",
@@ -446,7 +813,11 @@ else:
                        mime="text/csv")
 
     st.divider()
-    if st.button("🔎 Επιστροφή στην Περιήγηση"):
+    ecol1, ecol2 = st.columns(2)
+    if ecol1.button("📊 Επιστροφή στην Επισκόπηση"):
+        st.session_state["page"] = "dashboard"
+        st.rerun()
+    if ecol2.button("🔎 Επιστροφή στην Περιήγηση"):
         st.session_state["page"] = "browse"
         st.rerun()
 

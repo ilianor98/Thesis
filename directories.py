@@ -11,3 +11,4 @@ SPITI_PC_ORISMOI_DEEP = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi_
 SPITI_PC_ORISMOI_NLP = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi_nlp.db")
 SPITI_PC_ORISMOI_TEST = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi_test.db")
 SPITI_PC_ORISMOI_TEST1 = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi_test1.db")
+SPITI_PC_ORISMOI_FINAL = Path(r"C:/Users/Ilias/Desktop/diplo/thesis/vasi/orismoi_final.db")

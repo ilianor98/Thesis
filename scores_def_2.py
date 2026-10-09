@@ -1,201 +1,140 @@
-# rescore_to_score2.py
+# scores_def_2.py — βαθμός αξιοπιστίας για κάθε ορισμό του πίνακα definitions (πίνακας score_2)
 import sqlite3, re, json
 from directories import *
 
-DB = STRATOS_PC_ORISMOI_1  # same DB that has definitions + score
+DB = SPITI_PC_ORISMOI_FINAL  # βάση της εξαγωγής του extract_junk.py (definitions με scope / in_def_article / lang)
+
+RULE_VERSION = "v3_structure"
+REVIEW_THRESHOLD = 0.50      # κάτω από αυτό: needs_review = 1
 
 # ───────────────────────── Regex helpers
-GREEK_RE = re.compile(r"[Α-Ωα-ωάέήίόύώ]")
-
-STOP_HDR_RE = re.compile(
-    r"(?:^|¶)\s*(Άρθρο|ΑΡΘΡΟ|ΚΕΦΑΛΑΙΟ|ΤΜΗΜΑ|ΜΕΡΟΣ|ΠΑΡΑΡΤΗΜΑ|ΠΡΩΤΟΚΟΛΛΟ|ΚΑΤΑΛΟΓΟΣ|ΠΙΝΑΚΑΣ)\b",
+# Η επεξήγηση ξεκινά συνήθως με ονοματική φράση («η αρχή…», «κάθε πρόσωπο…») ή με ρήμα ορισμού.
+NP_START_RE = re.compile(
+    r"^(?:(?:η|ο|το|οι|τα|τον|την|τη|τους|τις|του|της|των)\b(?!\s+οποί)"    # άρθρο, αλλά όχι «το οποίο…»
+    r"|(?:κάθε|οποι(?:ος|α|ο|οι|ες)δήποτε|ένας|ένα|μία|μια|όλ(?:οι|ες|α)|εκείν(?:ος|η|ο|οι|ες|α)"
+    r"|όσ(?:οι|ες|α)|είναι|σημαίν(?:ει|ουν)|νοείται|νοούνται|εννοείται)\b)",
     re.I
 )
-NESTED_BULLET_RE = re.compile(r"(?:^|¶)\s*[α-ωάέήίόύώ]{1,2}[\)\.]", re.I)
+# «Όρος» ή «Άλλος όρος» …: η επεξήγηση ξεκινά με τη συνέχεια της απαρίθμησης όρων
+CONTINUATION_RE = re.compile(r"^(?:ή|και|,)", re.I)
 
-DEF_VERB_RE = re.compile(
-    r"\b(ορίζ(?:εται|ονται)|νοείτ(?:αι|ουν)|σημαίν(?:ει|ουν)|θεωρείτ(?:αι|ουν)|καθορίζ(?:εται|ονται))\b",
+# σύνδεσμος ανάμεσα στον όρο και την επεξήγηση: «:» ή ρήμα ορισμού
+CONNECTOR_RE = re.compile(
+    r"^[\s»\"”]*(?::|(?:ορίζ(?:εται|ονται)|νοείται|νοούνται|εννοείται|σημαίν(?:ει|ουν)"
+    r"|καθορίζ(?:εται|ονται)|θεωρείται|είναι)\b)",
     re.I
 )
-SCOPE_PHRASE_RE = re.compile(r"\b(για\s+τους\s+σκοπούς|για\s+την\s+εφαρμογή|νοούνται\s+ως|νοείται\s+ως)\b", re.I)
-ARTICLE_HDR_RE = re.compile(r"(?:^|¶)\s*Άρθρο\b|(?:^|¶)\s*ΑΡΘΡΟ\b", re.I)
-BIG_HDR_RE = re.compile(r"(?:^|¶)\s*(ΚΕΦΑΛΑΙΟ|ΤΜΗΜΑ|ΜΕΡΟΣ|ΠΑΡΑΡΤΗΜΑ|ΠΡΩΤΟΚΟΛΛΟ|ΚΑΤΑΛΟΓΟΣ|ΠΙΝΑΚΑΣ)\b", re.I)
-AMEND_RE = re.compile(r"\b(αντικαθίσταται|τροποποιείται|καταργείται|προστίθεται|διαγράφονται)\b", re.I)
+# επικεφαλίδες μέσα στην επεξήγηση = η επεξήγηση «κατάπιε» κείμενο του επόμενου άρθρου/κεφαλαίου
+HEADING_INSIDE_RE = re.compile(r"\b(?:ΚΕΦΑΛΑΙΟ|ΜΕΡΟΣ|ΤΜΗΜΑ|ΠΑΡΑΡΤΗΜΑ|ΑΡΘΡΟ|ΤΙΤΛΟΣ)\b|\bΆρθρο\s+\d+\s+[Α-ΩΆΈΉΊΌΎΏ]")
+# δεύτερος ορισμός μέσα στην ίδια επεξήγηση
+SECOND_DEF_RE = re.compile(r"[«\"“][^»\"”]{1,80}[»\"”]\s*,?\s+(?:νοείται|νοούνται|σημαίν(?:ει|ουν)|ορίζεται\s+ως)")
+AMEND_RE = re.compile(
+    r"\b(?:αντικαθίστα(?:ται|νται)|τροποποιείται|τροποποιούνται|καταργ(?:είται|ούνται)"
+    r"|προστίθε(?:ται|νται)|διαγράφ(?:εται|ονται))\b"
+)
 
-PARA_SPLIT_RE = re.compile(r"(?:\n+|¶+)")
+# Οι περιπτώσεις μιας απαρίθμησης τελειώνουν συχνά με «,» ή «·»· το «?» προέρχεται από χαμένους
+# χαρακτήρες του αρχικού κειμένου και όχι από πραγματικό ερωτηματικό.
+CLEAN_ENDINGS = set(".;·,»”\"?)")
 
 # ───────────────────────── Small utils
 def clamp01(x: float) -> float:
     return 0.0 if x < 0 else (1.0 if x > 1 else x)
 
-def greek_ratio(s: str) -> float:
-    if not s:
-        return 0.0
-    greek = len(GREEK_RE.findall(s))
-    return greek / max(1, len(s))
-
-def cut_at_first(pattern, text: str) -> str:
-    m = pattern.search(text)
-    return text[:m.start()].rstrip() if m else text
-
-def clean_expl(expl: str) -> str:
-    if not expl:
-        return ""
-    e = expl.strip()
-    e = cut_at_first(STOP_HDR_RE, e)
-    m = NESTED_BULLET_RE.search(e)
-    if m and m.start() > 0:
-        e = e[:m.start()].rstrip()
-    return e.strip(" \t\r\n¶:")
-
-def ends_clean(text: str) -> tuple[bool, str]:
-    if not text:
-        return (False, "")
-    last = text.strip()[-1]
-    return (last in ".;»”\"", last)
-
-def is_term_suspicious(term: str) -> bool:
-    t = (term or "").strip()
-    if not t:
-        return True
-    if "¶" in t or "\n" in t:
-        return True
-    if not GREEK_RE.search(t):
-        return True
-    if len(t) > 140:
-        return True
-    if len(t.split()) > 14:
-        return True
-    digits = sum(ch.isdigit() for ch in t)
-    if digits >= 10:
-        return True
-    return False
-
-def has_term_quoted_in_excerpt(term: str, excerpt: str) -> int:
+def has_connector(term: str, excerpt: str, offset_start: int) -> bool:
+    """Ο όρος ακολουθείται από «:» ή ρήμα ορισμού στο αρχικό κείμενο;"""
     if not term or not excerpt:
-        return 0
-    t = re.escape(term.strip())
-    # «TERM» or "TERM"
-    if re.search(rf"«\s*{t}\s*»", excerpt):
-        return 1
-    if re.search(rf"\"\s*{t}\s*\"", excerpt):
-        return 1
-    # fallback: any guillemets present near definitions
-    if "«" in excerpt and "»" in excerpt:
-        return 1
-    return 0
-
-def para_stats(excerpt: str) -> tuple[int, float]:
-    if not excerpt:
-        return 0, 0.0
-    parts = [p for p in PARA_SPLIT_RE.split(excerpt) if p.strip()]
-    pc = len(parts)
-    density = pc / max(1.0, (len(excerpt) / 1000.0))
-    return pc, float(density)
+        return False
+    k = min(120, offset_start or 0)          # το excerpt αρχίζει 120 χαρακτήρες πριν από τον ορισμό
+    m = re.compile(r"\s+".join(map(re.escape, term.split()))).search(excerpt, k)
+    return bool(m and CONNECTOR_RE.match(excerpt[m.end():m.end() + 40]))
 
 # ───────────────────────── Scoring
-def score_row(term: str, expl: str, excerpt: str, pattern_tag: str):
-    expl_clean = clean_expl(expl)
-    L = len(expl_clean)
+def score_row(term: str, expl: str, excerpt: str, pattern_tag: str,
+              in_def_article: int, scope: str, lang: str, offset_start: int):
+    term = (term or "").strip()
+    expl = (expl or "").strip().lstrip(" .,:;·-–")   # π.χ. «Αρχή». Ο κατάλληλος φορέας…
+    words = term.split()
+    L = len(expl)
 
     flags = {}
-    flags["has_quotes"] = has_term_quoted_in_excerpt(term, excerpt)
-    flags["has_def_verb"] = int(bool(DEF_VERB_RE.search(expl or "") or DEF_VERB_RE.search(excerpt or "")))
-    flags["has_scope_phrase"] = int(bool(SCOPE_PHRASE_RE.search(expl or "") or SCOPE_PHRASE_RE.search(excerpt or "")))
-    flags["has_nested_bullets"] = int(bool(NESTED_BULLET_RE.search(expl or "") or NESTED_BULLET_RE.search(excerpt or "")))
+    flags["explicit_connector"] = int(pattern_tag in ("verb", "unquoted") or has_connector(term, excerpt, offset_start))
+    flags["in_def_article"] = int(bool(in_def_article))
+    flags["has_scope"] = int(bool(scope))
+    digits = sum(ch.isdigit() for ch in term)
+    flags["term_digit_heavy"] = int(digits > 0 and digits / max(1, len(term.replace(" ", ""))) > 0.3)
+    flags["expl_np_start"] = int(bool(NP_START_RE.match(expl)))
+    flags["expl_continuation"] = int(not flags["expl_np_start"] and bool(CONTINUATION_RE.match(expl)))
+    flags["ends_with"] = expl[-1:] if expl else ""
+    flags["ends_clean"] = int(flags["ends_with"] in CLEAN_ENDINGS)
+    flags["heading_inside"] = int(bool(HEADING_INSIDE_RE.search(expl)))
+    flags["contains_amendment"] = int(bool(AMEND_RE.search(expl)))
+    flags["second_def_inside"] = int(bool(SECOND_DEF_RE.search(expl)))
+    flags["not_greek"] = int(lang not in (None, "el"))
 
-    # check headers/amendments on cleaned explanation (to avoid nuking good defs)
-    flags["contains_article_header"] = int(bool(ARTICLE_HDR_RE.search(expl_clean)))
-    flags["contains_big_header"] = int(bool(BIG_HDR_RE.search(expl_clean)))
-    flags["contains_amendment"] = int(bool(AMEND_RE.search(expl_clean)))
+    contrib = {"base": 0.20}
 
-    flags["term_suspicious"] = int(is_term_suspicious(term))
-    flags["expl_empty"] = int(L == 0)
-    flags["expl_too_short"] = int(0 < L < 20)
-    flags["expl_too_long"] = int(L > 1200)  # generous
+    # 1. Κανόνας εξαγωγής. Μια περίπτωση με όρο σε εισαγωγικά μετρά ως ισχυρή ένδειξη μόνο όταν
+    #    υπάρχει πλαίσιο ορισμού· αλλιώς μπορεί να είναι απλή λίστα ονομάτων.
+    context = flags["in_def_article"] or flags["has_scope"] or flags["explicit_connector"]
+    if pattern_tag == "verb":
+        contrib["rule_verb"] = 0.15
+    elif pattern_tag == "unquoted":
+        contrib["rule_unquoted"] = 0.10
+    elif context:
+        contrib["rule_bullet"] = 0.15
 
-    ec, ew = ends_clean(expl_clean)
-    flags["ends_clean"] = int(ec)
-    flags["ends_with"] = ew
+    # 2. Δομή και πλαίσιο
+    if flags["in_def_article"]:
+        contrib["in_def_article"] = 0.15
+    if flags["has_scope"]:
+        contrib["has_scope"] = 0.05
+    if flags["explicit_connector"]:
+        contrib["explicit_connector"] = 0.10
 
-    # Base score
-    contrib = {}
-    score = 0.20
-    contrib["base"] = 0.20
+    # 3. Όρος
+    if 1 <= len(words) <= 6:
+        contrib["term_short"] = 0.05
+    elif len(words) > 10:
+        contrib["term_long"] = -0.10
+    if flags["term_digit_heavy"]:
+        contrib["term_digit_heavy"] = -0.15
 
-    # Tag priors
-    if pattern_tag == "bullet":
-        score += 0.10; contrib["tag_bullet"] = 0.10
-    elif pattern_tag == "verb":
-        score += 0.08; contrib["tag_verb"] = 0.08
-    elif pattern_tag == "scope":
-        score += 0.04; contrib["tag_scope"] = 0.04
-
-    # Signals
-    if flags["has_quotes"]:
-        score += 0.12; contrib["has_quotes"] = 0.12
-    if flags["has_def_verb"]:
-        score += 0.22; contrib["has_def_verb"] = 0.22
-    if flags["has_scope_phrase"]:
-        score += 0.06; contrib["has_scope_phrase"] = 0.06
+    # 4. Επεξήγηση
+    if L < 20:
+        contrib["expl_very_short"] = -0.25
+    elif L < 40:
+        contrib["expl_short"] = -0.05
+    elif L <= 1200:
+        contrib["expl_good_len"] = 0.10
+    elif L < 3000:
+        contrib["expl_long"] = -0.05
+    else:
+        contrib["expl_very_long"] = -0.15
+    if flags["expl_np_start"]:
+        contrib["expl_np_start"] = 0.10
+    elif flags["expl_continuation"]:
+        contrib["expl_continuation"] = -0.05
     if flags["ends_clean"]:
-        score += 0.04; contrib["ends_clean"] = 0.04
-
-    # Length sweet spot
-    if 40 <= L <= 900:
-        score += 0.10; contrib["expl_good_len"] = 0.10
-    elif flags["expl_too_short"]:
-        score -= 0.18; contrib["expl_too_short"] = -0.18
-    elif flags["expl_too_long"]:
-        score -= 0.08; contrib["expl_too_long"] = -0.08
-
-    # Penalties (soft)
-    if flags["contains_article_header"]:
-        score -= 0.06; contrib["contains_article_header"] = -0.06
-    if flags["contains_big_header"]:
-        score -= 0.06; contrib["contains_big_header"] = -0.06
+        contrib["ends_clean"] = 0.05
+    elif flags["ends_with"] == ":":
+        contrib["ends_colon"] = -0.05
+    else:
+        contrib["ends_mid_sentence"] = -0.10
+    if flags["heading_inside"]:
+        contrib["heading_inside"] = -0.20
     if flags["contains_amendment"]:
-        score -= 0.10; contrib["contains_amendment"] = -0.10
-    if flags["has_nested_bullets"]:
-        score -= 0.05; contrib["has_nested_bullets"] = -0.05
+        contrib["contains_amendment"] = -0.10
+    if flags["second_def_inside"]:
+        contrib["second_def_inside"] = -0.05
 
-    if flags["expl_empty"]:
-        score -= 0.35; contrib["expl_empty"] = -0.35
-    if flags["term_suspicious"]:
-        score -= 0.40; contrib["term_suspicious"] = -0.40
+    # 5. Γλώσσα (π.χ. αγγλικό κείμενο διεθνών συμβάσεων)
+    if flags["not_greek"]:
+        contrib["not_greek"] = -0.30
 
-    # Strong-def floor (prevents good treaty defs from going to ~0)
-    strong_def = (flags["has_def_verb"] == 1 and flags["term_suspicious"] == 0 and flags["expl_empty"] == 0)
-    if strong_def:
-        score = max(score, 0.35)
-        contrib["strong_def_floor"] = 0.35
-
-    conf = clamp01(score)
-    needs_review = int(conf < 0.35)
-
-    # extra stats for future analysis
-    term_len = len((term or "").strip())
-    expl_len = len((expl or "").strip())
-    term_gr = round(greek_ratio(term or ""), 3)
-    expl_gr = round(greek_ratio(expl_clean), 3)
-
-    pc, pd = para_stats(excerpt or "")
-
-    payload = {
-        "contrib": contrib,
-        "meta": {
-            "term_len": term_len,
-            "expl_len": expl_len,
-            "expl_len_clean": L,
-            "term_greek_ratio": term_gr,
-            "expl_greek_ratio": expl_gr,
-            "para_count": pc,
-            "para_density": round(pd, 3),
-        },
-        "expl_clean": expl_clean,
-    }
-
-    return conf, needs_review, flags, pc, pd, term_len, expl_len, L, term_gr, expl_gr, payload
+    conf = round(clamp01(sum(contrib.values())), 3)
+    needs_review = int(conf < REVIEW_THRESHOLD)
+    return conf, needs_review, flags, len(words), L, contrib
 
 # ───────────────────────── Main
 def main():
@@ -203,43 +142,40 @@ def main():
     con.execute("PRAGMA foreign_keys = ON;")
     cur = con.cursor()
 
-    # Create score_2 fresh (keeps your existing score table untouched)
+    cols = {r[1] for r in cur.execute("PRAGMA table_info(definitions)")}
+    missing = {"scope", "in_def_article", "lang"} - cols
+    if missing:
+        raise SystemExit(f"Η βάση {DB} δεν έχει τις στήλες {sorted(missing)}· τρέξε πρώτα το extract_junk.py.")
+
     cur.executescript("""
     DROP TABLE IF EXISTS score_2;
     CREATE TABLE score_2 (
-      def_id                  INTEGER PRIMARY KEY,
-      confidence              REAL    NOT NULL,
-      needs_review            INTEGER NOT NULL,
+      def_id              INTEGER PRIMARY KEY,
+      confidence          REAL    NOT NULL,
+      needs_review        INTEGER NOT NULL,
 
-      has_quotes              INTEGER NOT NULL,
-      has_def_verb            INTEGER NOT NULL,
-      has_scope_phrase        INTEGER NOT NULL,
-      has_nested_bullets      INTEGER NOT NULL,
+      pattern_tag         TEXT,
+      explicit_connector  INTEGER NOT NULL,
+      in_def_article      INTEGER NOT NULL,
+      has_scope           INTEGER NOT NULL,
 
-      ends_clean              INTEGER NOT NULL,
-      ends_with               TEXT,
+      term_words          INTEGER NOT NULL,
+      term_digit_heavy    INTEGER NOT NULL,
 
-      contains_article_header INTEGER NOT NULL,
-      contains_big_header     INTEGER NOT NULL,
-      contains_amendment      INTEGER NOT NULL,
+      expl_len            INTEGER NOT NULL,
+      expl_np_start       INTEGER NOT NULL,
+      expl_continuation   INTEGER NOT NULL,
+      ends_clean          INTEGER NOT NULL,
+      ends_with           TEXT,
+      heading_inside      INTEGER NOT NULL,
+      contains_amendment  INTEGER NOT NULL,
+      second_def_inside   INTEGER NOT NULL,
+      not_greek           INTEGER NOT NULL,
 
-      para_count              INTEGER NOT NULL,
-      para_density            REAL    NOT NULL,
-
-      term_suspicious         INTEGER NOT NULL,
-      expl_empty              INTEGER NOT NULL,
-      expl_too_short          INTEGER NOT NULL,
-      expl_too_long           INTEGER NOT NULL,
-
-      term_len                INTEGER NOT NULL,
-      expl_len                INTEGER NOT NULL,
-      expl_len_clean          INTEGER NOT NULL,
-      term_greek_ratio        REAL    NOT NULL,
-      expl_greek_ratio        REAL    NOT NULL,
-
-      rule_version            TEXT    NOT NULL,
-      contributions_json      TEXT    NOT NULL,
-      created_at              TEXT    NOT NULL DEFAULT (datetime('now'))
+      rule_version        TEXT    NOT NULL,
+      contributions_json  TEXT    NOT NULL,
+      created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(def_id) REFERENCES definitions(ID)
     );
 
     CREATE INDEX idx_score2_confidence ON score_2(confidence);
@@ -247,44 +183,39 @@ def main():
     """)
 
     rows = cur.execute("""
-      SELECT ID, term, explanation, excerpt, pattern_tag
+      SELECT ID, term, explanation, excerpt, pattern_tag, in_def_article, scope, lang, offset_start
       FROM definitions
     """).fetchall()
 
     inserted = 0
-    RULE_VERSION = "v2_clean_cut"
-
-    for def_id, term, expl, excerpt, tag in rows:
-        conf, needs_review, flags, pc, pd, term_len, expl_len, expl_len_clean, term_gr, expl_gr, payload = score_row(
-            term or "", expl or "", excerpt or "", (tag or "")
+    for def_id, term, expl, excerpt, tag, in_def, scope, lang, off in rows:
+        conf, needs_review, f, term_words, expl_len, contrib = score_row(
+            term, expl, excerpt, tag, in_def, scope, lang, off
         )
-
         cur.execute("""
           INSERT INTO score_2 (
             def_id, confidence, needs_review,
-            has_quotes, has_def_verb, has_scope_phrase, has_nested_bullets,
-            ends_clean, ends_with,
-            contains_article_header, contains_big_header, contains_amendment,
-            para_count, para_density,
-            term_suspicious, expl_empty, expl_too_short, expl_too_long,
-            term_len, expl_len, expl_len_clean, term_greek_ratio, expl_greek_ratio,
+            pattern_tag, explicit_connector, in_def_article, has_scope,
+            term_words, term_digit_heavy,
+            expl_len, expl_np_start, expl_continuation, ends_clean, ends_with,
+            heading_inside, contains_amendment, second_def_inside, not_greek,
             rule_version, contributions_json
-          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             def_id, conf, needs_review,
-            flags["has_quotes"], flags["has_def_verb"], flags["has_scope_phrase"], flags["has_nested_bullets"],
-            flags["ends_clean"], flags["ends_with"],
-            flags["contains_article_header"], flags["contains_big_header"], flags["contains_amendment"],
-            pc, pd,
-            flags["term_suspicious"], flags["expl_empty"], flags["expl_too_short"], flags["expl_too_long"],
-            term_len, expl_len, expl_len_clean, term_gr, expl_gr,
-            RULE_VERSION, json.dumps(payload, ensure_ascii=False)
+            tag, f["explicit_connector"], f["in_def_article"], f["has_scope"],
+            term_words, f["term_digit_heavy"],
+            expl_len, f["expl_np_start"], f["expl_continuation"], f["ends_clean"], f["ends_with"],
+            f["heading_inside"], f["contains_amendment"], f["second_def_inside"], f["not_greek"],
+            RULE_VERSION, json.dumps(contrib, ensure_ascii=False)
         ))
         inserted += 1
 
     con.commit()
+    flagged, avg = cur.execute("SELECT SUM(needs_review), ROUND(AVG(confidence), 3) FROM score_2").fetchone()
     con.close()
     print(f"[+] Inserted {inserted} rows into score_2 in: {DB}")
+    print(f"    μέσος βαθμός {avg} | needs_review (< {REVIEW_THRESHOLD}): {flagged}")
 
 if __name__ == "__main__":
     main()
