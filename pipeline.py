@@ -16,9 +16,9 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import category1
-import extract_junk
-import scores_def_2
+import category
+import extract
+import score
 from directories import DEFAULT_HARVESTER, DEFAULT_RESULTS
 
 # στήλες του πίνακα et που χρειάζεται η εξαγωγή
@@ -66,7 +66,7 @@ def validate_harvester(path) -> list:
 def harvester_summary(path) -> dict:
     con = _ro(path)
     rows, with_text, y0, y1 = con.execute(
-        "SELECT COUNT(*), SUM(fekTEXT IS NOT NULL), MIN(fekEtos), MAX(fekEtos) FROM et").fetchone()
+        "SELECT COUNT(*), SUM(length(fekTEXT) > 100), MIN(fekEtos), MAX(fekEtos) FROM et").fetchone()
     con.close()
     return {"rows": rows, "with_text": with_text or 0, "year_min": y0, "year_max": y1}
 
@@ -116,7 +116,7 @@ class Status:
 
 # ───────────────────────── Εκτέλεση
 def run_pipeline(source=None, out=DEFAULT_RESULTS, categorize=False, only_categorize=False,
-                 api_base=category1.API_BASE, overwrite=False, status_file=None) -> dict:
+                 api_base=category.API_BASE, overwrite=False, status_file=None) -> dict:
     out = Path(out)
     status = Status(status_file, source=str(source) if source else None, out=str(out),
                     categorize=bool(categorize or only_categorize))
@@ -137,7 +137,7 @@ def run_pipeline(source=None, out=DEFAULT_RESULTS, categorize=False, only_catego
                 if not overwrite:
                     raise FileExistsError(f"Το {out} υπάρχει ήδη (χρησιμοποίησε --overwrite).")
         if categorize or only_categorize:
-            ok, _ = category1.kevlar_status(api_base)
+            ok, _ = category.kevlar_status(api_base)
             if not ok:
                 raise RuntimeError(f"Το KEVLAR δεν απαντά στο {api_base}. "
                                    f"Ξεκίνησέ το με: docker run -p 8080:80 kevlar")
@@ -147,10 +147,10 @@ def run_pipeline(source=None, out=DEFAULT_RESULTS, categorize=False, only_catego
             if out.exists():
                 out.unlink()
             out.parent.mkdir(parents=True, exist_ok=True)
-            summary["extraction"] = extract_junk.run(source, out, status.stage("extract", "Εξαγωγή ορισμών"))
-            summary["scoring"] = scores_def_2.run(out, status.stage("score", "Βαθμολόγηση"))
+            summary["extraction"] = extract.run(source, out, status.stage("extract", "Εξαγωγή ορισμών"))
+            summary["scoring"] = score.run(out, status.stage("score", "Βαθμολόγηση"))
         if categorize or only_categorize:
-            summary["categorization"] = category1.run(out, api_base, status.stage("categorize", "Κατηγοριοποίηση (KEVLAR)"))
+            summary["categorization"] = category.run(out, api_base, status.stage("categorize", "Κατηγοριοποίηση (KEVLAR)"))
 
         info = {"updated_at": datetime.now().isoformat(timespec="seconds")}
         if not only_categorize:
@@ -158,8 +158,8 @@ def run_pipeline(source=None, out=DEFAULT_RESULTS, categorize=False, only_catego
             info.update({
                 "created_at": info["updated_at"],
                 "source": str(Path(source).resolve()),
-                "extract_version": extract_junk.EXTRACT_VERSION,
-                "scoring_version": scores_def_2.RULE_VERSION,
+                "extract_version": extract.EXTRACT_VERSION,
+                "scoring_version": score.RULE_VERSION,
                 "definitions": ext["definitions"], "issues": ext["issues"],
                 "by_tag": ext["by_tag"], "act_unresolved": ext["act_unresolved"],
                 "needs_review": sc["needs_review"], "mean_confidence": sc["mean_confidence"],
@@ -184,7 +184,7 @@ def main():
     ap.add_argument("--out", default=str(DEFAULT_RESULTS), help="βάση αποτελεσμάτων (προεπιλογή: %(default)s)")
     ap.add_argument("--categorize", action="store_true", help="κατηγοριοποίηση με το KEVLAR (πρέπει να τρέχει)")
     ap.add_argument("--only-categorize", action="store_true", help="μόνο κατηγοριοποίηση μιας υπάρχουσας βάσης --out")
-    ap.add_argument("--api", default=category1.API_BASE, help="διεύθυνση του KEVLAR (προεπιλογή: %(default)s)")
+    ap.add_argument("--api", default=category.API_BASE, help="διεύθυνση του KEVLAR (προεπιλογή: %(default)s)")
     ap.add_argument("--overwrite", action="store_true", help="αντικατάσταση της --out αν υπάρχει")
     ap.add_argument("--status-file", help="αρχείο JSON για την πρόοδο (χρησιμοποιείται από το UI)")
     args = ap.parse_args()

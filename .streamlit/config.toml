@@ -6,3 +6,7 @@ maxUploadSize = 2048
 
 [browser]
 gatherUsageStats = false
+
+[client]
+# κρύβει το κουμπί «Deploy» του Streamlit Community Cloud
+toolbarMode = "minimal"

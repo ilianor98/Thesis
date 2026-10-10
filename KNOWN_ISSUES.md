@@ -2,11 +2,11 @@
 
 Recorded 2026-10-08. Decision: keep the code as it is and document these in the thesis (Ch4 Υλοποίηση, Ch5 Αποτίμηση, Ch6 Επίλογος) rather than fix them.
 
-**Update 2026-10-09:** `extract_junk.py` was rewritten, and its output now goes to a new database, `vasi/orismoi_final.db`. Issues 1 and 3 and the first and last points of issue 2 are fixed there. Sections 1–3 still describe the previous results in `orismoi_test1.db` correctly; those are the results the thesis text and the current scores and categories use. Section 4 lists what the new version still does not handle.
+**Update 2026-10-09:** the extraction script (now `extract.py`) was rewritten, and its output now goes to `vasi/orismoi.db` (tables `definitions`, `scores`, `categories`, `run_info`; the tables were called `score_2` and `category` in versions 1–3). Issues 1 and 3 and the first and last points of issue 2 are fixed there. Sections 1–3 describe the earlier versions of the rules (versions 1–3) and their results, whose databases are kept in `vasi/archive/`; the thesis uses the final version. Section 4 lists what the final version still does not handle.
 
 ## 1. The definitional-verb rule almost never matches
 
-**Where:** `verb_rgx` in `extract.py`, `extract_re.py` and `extract_junk.py`.
+**Where:** `verb_rgx` in versions 1–3 of the extraction rules.
 
 **Cause:** the pattern starts with a word boundary before the opening quote:
 
@@ -29,16 +29,16 @@ re.search(r'[«"](?P<term>[^»"]+)[»"]\s+ορίζεται\s+ως', s)    # -> m
 
 | Run (output DB) | bullet | scope | verb |
 |---|---|---|---|
-| `extract_re.py` → `orismoi_test.db` | 9,077 | 694 | 3 |
-| `extract_junk.py` → `orismoi_test1.db` (final) | 6,755 | 880 | 0 |
+| version 2 → `orismoi_test.db` | 9,077 | 694 | 3 |
+| version 3 → `orismoi_test1.db` | 6,755 | 880 | 0 |
 
 The final dataset therefore contains no definitions found through definitional verbs (`ορίζεται`, `νοείται`, `σημαίνει`, `θεωρείται`, `καθορίζεται`).
 
-**Likely fix (not applied):** remove the leading `\b`, then rerun extraction, `scores_def_2.py` and `category1.py` (the last needs the KEVLAR container running).
+**Likely fix (not applied):** remove the leading `\b`, then rerun extraction, scoring and categorization (the last needs the KEVLAR container running).
 
 ## 2. Related observations (not bugs, but the thesis must describe them accurately)
 
-- **Scope definitions have no explanation in the final data.** `extract_junk.py`'s scope rule stores only the term (`explanation = ""`), so all 880 scope rows in `orismoi_test1.db` are empty and score low in `score_2` (mean 0.181 vs 0.576 for bullet rows). `extract_re.py`'s scope rule did capture explanations (694/694 non-empty).
+- **Scope definitions have no explanation in the final data.** Version 3's scope rule stores only the term (`explanation = ""`), so all 880 scope rows in `orismoi_test1.db` are empty and score low in `score_2` (mean 0.181 vs 0.576 for bullet rows). Version 2's scope rule did capture explanations (694/694 non-empty).
 - **There is no separate nested-bullet merging step.** Sub-items such as `α)`, `β)` end up inside an explanation only because the bullet rule's lookahead stops at the next bullet that starts with a quoted term.
 - **Unquoted definitions are not covered.** The bullet and verb rules both require the term in quotes. Example: Ν. 4048/2012 (ΦΕΚ Α΄ 34, `et.ID` 3463), whose Άρθρο 1 «Ορισμοί» contains "α. Ρύθμιση είναι …", "β. Καλή νομοθέτηση είναι …", yields 0 extracted definitions.
 
@@ -67,7 +67,7 @@ Recorded 2026-10-09. Not a code change; the thesis numbers must account for it.
 
 ## 4. The rewritten extraction (2026-10-09): what changed and what it still misses
 
-**Changes in `extract_junk.py`:**
+**Changes in `extract.py`:**
 
 - **Line breaks:** all line endings are normalized (`\r\n` → ` \n`, lone `\r` → `\n`, so every offset stays the same). In a 400-issue sample, 55 texts (14%) used lone `\r` and had produced no list definitions at all. In `\r\n` texts, sentence ends and lines ending in «…:» were not recognized.
 - **Item markers:** `στ)`, `ια)`, `αα)`, `(α)`, `(1)` and `ιζ.` are now accepted. The old rule missed 99 of the 369 quoted items in the sampled «Ορισμοί» articles and merged each one into the explanation of the previous item; the new one catches all 369.
@@ -104,7 +104,7 @@ For comparison, the previous version produced 6,961 unique occurrences in 831 is
 
 The one bad unquoted row inside an article («Δεν») led to an added filter.
 
-**Scoring (`scores_def_2.py`, `rule_version = 'v3_structure'`).** The score is additive and each row records its contributions:
+**Scoring (`score.py`, `rule_version = 'v3_structure'`).** The score is additive and each row records its contributions:
 
 - **Base:** 0.20.
 - **Rule:** verb +0.15, unquoted +0.10, quoted list item +0.15 only when it has a definition context (definitions article, scope phrase, or «:»/definitional verb after the term).
@@ -136,6 +136,18 @@ Inspection of random rows per band found mostly non-definitions below 0.30, a mi
 - **Definitions inside amendment text.** Lines starting with «α) «Όρος»… (14 items in 5 of 400 sampled texts) are not extracted, as before.
 - **Texts without line breaks** (e.g. ΦΕΚ Α΄ 237/2000). The list rules depend on line starts, so only the verb rule can find definitions there.
 - **Inline lists** («…, ζ) ως «Διοικητής» νοείται …»). A verb-rule explanation can run into the next inline item; that item is also extracted on its own.
+- **Verb-rule forms that are not covered** (found 2026-10-09, kept as is by decision). The old scope rule pointed to 780 unique (issue, term) occurrences after «Για τους σκοπούς…». The new version finds 474 of them; 306 are missing. The most frequent reasons:
+
+  | Cases | Pattern | Example |
+  |---|---|---|
+  | 39 | two terms share one definition | «ένα Συμβαλλόμενο Κράτος» **και** «το άλλο Συμβαλλόμενο Κράτος» σημαίνουν… |
+  | 25 | extending definitions with «περιλαμβάνει» | «Ελληνική Δημοκρατία» περιλαμβάνει τα εδάφη… |
+  | 22 | the verb «υποδηλώνει», common in double-taxation treaties | «μόνιμη εγκατάσταση» υποδηλώνει έναν καθορισμένο τόπο… |
+  | 18 | alternative terms | «κοινοτική εταιρία» **ή** «αζερική εταιρία», αντίστοιχα, νοείται… |
+  | 19 | a colon right after the verb, followed by a list | «τομέας» νοείται: (i)… |
+  | 11 | a doubled closing quote | …»" σημαίνει… |
+
+  The rest are mostly not definitions. Because of the «υποδηλώνει» case, «μόνιμη εγκατάσταση» is found in 11 issues instead of the 28 where the old scope rule saw it.
 - **Long explanations.** 4 explanations reach the 5,000-character cap.
 - **Ambiguous markers.** `ια)` can be the 11th case or a sub-case (ι → α). The rules do not track numbering sequences, so an unquoted sibling item that is not a definition can stay inside the previous explanation.
 - **The score is a heuristic.** It reflects structural evidence, not meaning. A non-definition inside a definitions context, such as a provision written as «Όρος: …», can still score high. Definitions outside a definitions context score lower even when they are genuine (mean 0.618 vs 0.880 inside).

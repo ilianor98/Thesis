@@ -14,7 +14,7 @@ SETTINGS_FILE = PROJECT_DIR / "settings.json"     # δεν ανεβαίνει σ
 EXAMPLE_DIR = PROJECT_DIR / "example"             # βάση αποτελεσμάτων-παράδειγμα (ανεβαίνει στο git)
 
 HARVESTER_NAME = "harvester.db"
-RESULTS_NAME = "orismoi_final.db"
+RESULTS_NAME = "orismoi.db"
 
 
 def load_settings() -> dict:
